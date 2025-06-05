@@ -2,7 +2,7 @@
 
 ## Surface Web through the The RooTor - TOR proxy client 
 
-## Feautures
+## Features
 1.Surfacing web over the proxy network channel
 
 2.Scraping tags From Dark WEB
