@@ -3,7 +3,12 @@
 #pragma comment(lib, "ws2_32.lib")  
 
 void enqueue_url(const char *url) {
+    printf("[DEBUG] Entered enqueue_url() with url: %s\n", url ? url : "NULL");
+
+    fflush(stdout);
+
     EnterCriticalSection(&queue_lock);
+
     if ((queue_end + 1) % MAX_QUEUE != queue_start) {
         url_queue[queue_end] = _strdup(url);
         printf("[DEBUG] Enqueued URL: %s (at position %d)\n", url, queue_end);
@@ -13,23 +18,25 @@ void enqueue_url(const char *url) {
     else 
         printf("[WARN] Queue is full, cannot enqueue URL: %s\n", url);
     
+    fflush(stdout);
+    
     LeaveCriticalSection(&queue_lock);
 }
 
 char *dequeue_url() {
     char *url = NULL;
+
     EnterCriticalSection(&queue_lock);
-    
     if (queue_start != queue_end) {
         url = url_queue[queue_start];
+        printf("[DEBUG] Dequeued URL: %s (from position %d)\n", url, queue_start);
         queue_start = (queue_start + 1) % MAX_QUEUE;
-        printf("[DEBUG] Dequeued URL: %s\n", url);
     } 
     
-    else {
-        printf("[DEBUG] URL queue is empty\n");
-    }
+    else 
+        printf("[DEBUG] Queue is empty, nothing to dequeue\n");
     
+    fflush(stdout);
     LeaveCriticalSection(&queue_lock);
 
     return url;
@@ -126,13 +133,6 @@ DWORD WINAPI crawl_worker(LPVOID param) {
 
     while (1) {
         char *url = dequeue_url();
-
-        if (!url) {
-            printf("[DEBUG] No URL in queue, sleeping...\n");
-            fflush(stdout);
-            Sleep(100);
-            continue;
-        }
 
         printf("[~] Crawling: %s\n", url);
         fflush(stdout);
@@ -377,22 +377,29 @@ DWORD WINAPI crawl_worker(LPVOID param) {
 // }
 
 void start_threads(int thread_count) {
+    printf("[DEBUG] start_threads() called with %d threads\n", thread_count);
+    fflush(stdout);
+
     InitializeCriticalSection(&queue_lock);
-    HANDLE hThread = NULL;
 
     for (int i = 0; i < thread_count; ++i) {
-        hThread = CreateThread(NULL, 0, crawl_worker, NULL, 0, NULL);
-        if (hThread == NULL || hThread == INVALID_HANDLE_VALUE)
-            printf("[-] Failed to Create Thread: %lu\n", GetLastError());
-
+        HANDLE h = CreateThread(NULL, 0, crawl_worker, NULL, 0, NULL);
+        if (h == NULL) {
+            printf("[-] Failed to create thread %d, error: %lu\n", i, GetLastError());
+        } 
+        
         else
-            printf("[+] Thread %d successfully started: %d",i);
+            printf("[DEBUG] Thread %d started successfully.\n", i);
+        
+        fflush(stdout);
     }
 }
 
 int main(int argc, char* argv[]) {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2,2), &wsa);
+
+    InitializeCriticalSection(&queue_lock);  
 
     if (argc != 2) {
         printf("[!] Usage: rootor.exe <onion-hostname>\n");
