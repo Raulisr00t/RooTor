@@ -98,6 +98,38 @@ req *request(const char *dsthost, const int dstport, int *request_len) {
     return req;
 }
 
+int status_code(const char* response){
+    int code = 0;
+
+    sscanf(response,"HTTP/%*s %d",&code);
+    return code;
+}
+
+char* extract_location(const char *response) {
+    const char *loc = strstr(response, "\nLocation:");
+   
+    if (!loc) loc = strstr(response, "\nlocation:");
+    if (!loc) return NULL;
+   
+    loc += strlen("\nLocation:");
+   
+    while (*loc == ' ') loc++; 
+
+    const char *end = strchr(loc, '\r');
+    if (!end) end = strchr(loc, '\n');
+    if (!end) return NULL;
+
+    size_t len = end - loc;
+    char *location = malloc(len + 1);
+
+    if (!location) return NULL;
+    strncpy(location, loc, len);
+
+    location[len] = '\0';
+
+    return location;
+}
+
 void extract_tag_content(const char* html, const char* tag) {
     size_t tag_len = strlen(tag);
     char open_tag[64], close_tag[64];
@@ -133,6 +165,12 @@ DWORD WINAPI crawl_worker(LPVOID param) {
 
     while (1) {
         char *url = dequeue_url();
+
+        if (url == NULL) {
+            printf("[DEBUG] Queue is empty, nothing to dequeue\n");
+            Sleep(500); 
+            continue;   
+        }
 
         printf("[~] Crawling: %s\n", url);
         fflush(stdout);
