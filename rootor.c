@@ -160,11 +160,16 @@ int main(int argc, char* argv[]) {
         printf("[!] Usage: rootor.exe <onion-hostname>\n");
         return 1;
     }
-
+    
+    const char *url = argv[1];
+    
+    if(!is_onion_address(url)){
+        printf("[!] Please Enter Dark Web Site [!]\n");
+        return 1;
+    }    
+    
     printf("[?] Enter tag to extract (e.g., title, h1): ");
     scanf("%63s", user_tag);
-
-    const char *url = argv[1];
 
     enqueue_url(url);
     start_threads(THREADS);
