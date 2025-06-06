@@ -10,6 +10,12 @@
 #define PORT 9050
 #define reqsize sizeof(struct Request)
 #define respsize sizeof(struct Response)
+#define MAX_QUEUE 1024
+#define THREADS 4
+
+char *url_queue[MAX_QUEUE];
+int queue_start = 0, queue_end = 0;
+CRITICAL_SECTION queue_lock;
 
 typedef unsigned char int8;
 typedef unsigned short int int16;
@@ -34,4 +40,11 @@ struct Response {
 
 typedef struct Response resp;
 
-req *request(const char *dstip,const int dstport);
+req *request(const char *dstip,const int dstport, int *request_length);
+void extract_tags(const char* html,const char* tag);
+char *dequeue_url();
+DWORD WINAPI crawl_worker(LPVOID param);
+void start_threads(int t_count);
+void enqueue_url(const char* url);
+BOOL is_onion_address(const char *host);
+char user_tag[64];
