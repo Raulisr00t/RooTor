@@ -6,8 +6,13 @@ void enqueue_url(const char *url) {
     EnterCriticalSection(&queue_lock);
     if ((queue_end + 1) % MAX_QUEUE != queue_start) {
         url_queue[queue_end] = _strdup(url);
+        printf("[DEBUG] Enqueued URL: %s (at position %d)\n", url, queue_end);
         queue_end = (queue_end + 1) % MAX_QUEUE;
-    }
+    } 
+    
+    else 
+        printf("[WARN] Queue is full, cannot enqueue URL: %s\n", url);
+    
     LeaveCriticalSection(&queue_lock);
 }
 
@@ -373,9 +378,15 @@ DWORD WINAPI crawl_worker(LPVOID param) {
 
 void start_threads(int thread_count) {
     InitializeCriticalSection(&queue_lock);
- 
+    HANDLE hThread = NULL;
+
     for (int i = 0; i < thread_count; ++i) {
-        CreateThread(NULL, 0, crawl_worker, NULL, 0, NULL);
+        hThread = CreateThread(NULL, 0, crawl_worker, NULL, 0, NULL);
+        if (hThread == NULL || hThread == INVALID_HANDLE_VALUE)
+            printf("[-] Failed to Create Thread: %lu\n", GetLastError());
+
+        else
+            printf("[+] Thread %d successfully started: %d",i);
     }
 }
 
