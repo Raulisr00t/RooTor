@@ -81,21 +81,36 @@ void extract_tag_content(const char* html, const char* tag) {
 }
 
 DWORD WINAPI crawl_worker(LPVOID param) {
-    int port = 80;
-    
     while (1) {
         char *url = dequeue_url();
+ 
         if (!url) {
             Sleep(100);
             continue;
         }
 
+        printf("[~] Crawling: %s\n", url);
+
         WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
+ 
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            printf("[-] WSAStartup failed\n");
+            free(url);
+            continue;
+        }
 
         SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
-        struct sockaddr_in sock;
+ 
+        if (s == INVALID_SOCKET) {
+            printf("[-] Socket creation failed\n");
+            WSACleanup();
+ 
+            free(url);
+            continue;
+        }
 
+        struct sockaddr_in sock;
+ 
         sock.sin_family = AF_INET;
         sock.sin_port = htons(PORT);
         sock.sin_addr.s_addr = inet_addr(LOCAL_PROXY);
@@ -103,44 +118,76 @@ DWORD WINAPI crawl_worker(LPVOID param) {
         if (connect(s, (struct sockaddr*)&sock, sizeof(sock)) != 0) {
             printf("[-] Failed to connect to proxy\n");
             closesocket(s);
+            WSACleanup();
+
+            free(url);
             continue;
         }
+
+        printf("[+] Connected to SOCKS proxy\n");
 
         int req_len;
-        req *r = request(url, port, &req_len);
-        
-        send(s, (char*)r, req_len, 0);
-        char buf[respsize];
-        
-        recv(s, buf, respsize, 0);
-
-        resp *response = (resp*)buf;
-        
-        if (response->cd != 90) {
-            printf("[-] SOCKS Proxy refused connection\n");
-    
+        req *r = request(url, 80, &req_len);
+        if (!r) {
+            printf("[-] Failed to build SOCKS request\n");
             closesocket(s);
-            free(r);
+            WSACleanup();
+            
+            free(url);
             continue;
         }
 
-        char tmp[2048];
-    
+        send(s, (char*)r, req_len, 0);
+
+        char buf[respsize];
+        int res = recv(s, buf, respsize, 0);
+        if (res <= 0) {
+            printf("[-] SOCKS proxy didn't respond\n");
+            closesocket(s);
+            free(r);
+            WSACleanup();
+            
+            free(url);
+            continue;
+        }
+
+        resp *response = (resp*)buf;
+        printf("[+] SOCKS response code: %d\n", response->cd);
+        if (response->cd != 90) {
+            printf("[-] SOCKS Proxy refused connection\n");
+            closesocket(s);
+            free(r);
+            WSACleanup();
+            
+            free(url);
+            continue;
+        }
+
+        char tmp[8192];
         snprintf(tmp, sizeof(tmp),
-            "GET / HTTP/1.0\r\nHost: %s\r\n\r\n", url);
+            "GET / HTTP/1.1\r\n"
+            "Host: %s\r\n"
+            "Connection: close\r\n"
+            "User-Agent: Toralizer/1.0\r\n\r\n", url);
 
         send(s, tmp, strlen(tmp), 0);
         memset(tmp, 0, sizeof(tmp));
-        recv(s, tmp, sizeof(tmp)-1, 0);
 
-        printf("[RESPONSE FROM %s]\n%s\n", url, tmp);
-        //extract_links(tmp);
+        int len = recv(s, tmp, sizeof(tmp) - 1, 0);
        
-        extract_tag_content(tmp, user_tag);
+        if (len <= 0) 
+            printf("[-] No HTTP response received from %s\n", url);
+         
+        else {
+            tmp[len] = '\0';
+    
+            printf("[RESPONSE FROM %s]\n%s\n", url, tmp);
+            extract_tag_content(tmp, user_tag);
+        }
 
         closesocket(s);
         free(r);
-
+        
         WSACleanup();
         free(url);
     }
@@ -150,6 +197,7 @@ DWORD WINAPI crawl_worker(LPVOID param) {
 
 void start_threads(int thread_count) {
     InitializeCriticalSection(&queue_lock);
+ 
     for (int i = 0; i < thread_count; ++i) {
         CreateThread(NULL, 0, crawl_worker, NULL, 0, NULL);
     }
