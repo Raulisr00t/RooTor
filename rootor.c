@@ -29,14 +29,18 @@ BOOL is_onion_address(const char *host) {
 req *request(const char *dsthost, const int dstport, int *request_len) {
     BOOL is_onion = is_onion_address(dsthost);
     int extra = is_onion ? strlen(dsthost) + 1 : 0;
+    
     *request_len = reqsize + extra;
+    
     req *req = malloc(*request_len);
-    if (!req) return NULL;
+    if (!req) 
+        return NULL;
 
     req->vn = 4;
     req->cd = 1;
     req->destination_port = htons(dstport);
     req->destination_ip = is_onion ? htonl(0x00000001) : inet_addr(dsthost);
+    
     strncpy((char*)req->user_id, "RooTorz", 8);
 
     if (is_onion) {
@@ -112,12 +116,14 @@ DWORD WINAPI crawl_worker(LPVOID param) {
         
         if (response->cd != 90) {
             printf("[-] SOCKS Proxy refused connection\n");
+    
             closesocket(s);
             free(r);
             continue;
         }
 
         char tmp[2048];
+    
         snprintf(tmp, sizeof(tmp),
             "GET / HTTP/1.0\r\nHost: %s\r\n\r\n", url);
 
@@ -132,9 +138,11 @@ DWORD WINAPI crawl_worker(LPVOID param) {
 
         closesocket(s);
         free(r);
+
         WSACleanup();
         free(url);
     }
+
     return 0;
 }
 
