@@ -298,9 +298,9 @@ DWORD WINAPI crawl_worker(LPVOID param) {
         
             fflush(stdout);
 
-            int status_code = parse_status_code(tmp);
+            int statuscode = status_code(tmp);
         
-            if (status_code >= 300 && status_code < 400) {
+            if (statuscode >= 300 && statuscode < 400) {
                 char *location = extract_location(tmp);
         
                 if (location) {
