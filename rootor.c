@@ -12,6 +12,7 @@ void enqueue_url(const char *url) {
     if ((queue_end + 1) % MAX_QUEUE != queue_start) {
         url_queue[queue_end] = _strdup(url);
         printf("[DEBUG] Enqueued URL: %s (at position %d)\n", url, queue_end);
+        
         queue_end = (queue_end + 1) % MAX_QUEUE;
     } 
     
@@ -180,20 +181,24 @@ DWORD WINAPI crawl_worker(LPVOID param) {
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
             printf("[-] WSAStartup failed. Error: %d\n", WSAGetLastError());
             fflush(stdout);
+   
             free(url);
             continue;
         }
 
         SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+   
         if (s == INVALID_SOCKET) {
             printf("[-] Socket creation failed. Error: %d\n", WSAGetLastError());
             fflush(stdout);
+   
             WSACleanup();
             free(url);
             continue;
         }
 
         struct sockaddr_in sock;
+   
         sock.sin_family = AF_INET;
         sock.sin_port = htons(PORT);
         sock.sin_addr.s_addr = inet_addr(LOCAL_PROXY);
@@ -202,7 +207,9 @@ DWORD WINAPI crawl_worker(LPVOID param) {
             printf("[-] Failed to connect to proxy. Error: %d\n", WSAGetLastError());
             fflush(stdout);
             closesocket(s);
+   
             WSACleanup();
+   
             free(url);
             continue;
         }
@@ -212,11 +219,13 @@ DWORD WINAPI crawl_worker(LPVOID param) {
 
         int req_len;
         req *r = request(url, 80, &req_len);
+   
         if (!r) {
             printf("[-] Failed to build SOCKS request. Error: %lu\n", GetLastError());
             fflush(stdout);
             closesocket(s);
             WSACleanup();
+   
             free(url);
             continue;
         }
@@ -227,6 +236,7 @@ DWORD WINAPI crawl_worker(LPVOID param) {
             closesocket(s);
             free(r);
             WSACleanup();
+
             free(url);
             continue;
         }
@@ -287,7 +297,27 @@ DWORD WINAPI crawl_worker(LPVOID param) {
             printf("[RESPONSE FROM %s]\n%s\n", url, tmp);
         
             fflush(stdout);
-            extract_tag_content(tmp, user_tag);
+
+            int status_code = parse_status_code(tmp);
+        
+            if (status_code >= 300 && status_code < 400) {
+                char *location = extract_location(tmp);
+        
+                if (location) {
+                    printf("[~] Redirect detected: %s\n", location);
+                    enqueue_url(location);
+                    free(location);
+                }
+                closesocket(s);
+                free(r);
+        
+                WSACleanup();
+                free(url);
+        
+                continue;  // Don't extract tags from redirect pages
+            }
+
+        extract_tag_content(tmp, user_tag);
         }
 
         closesocket(s);
@@ -422,6 +452,7 @@ void start_threads(int thread_count) {
 
     for (int i = 0; i < thread_count; ++i) {
         HANDLE h = CreateThread(NULL, 0, crawl_worker, NULL, 0, NULL);
+
         if (h == NULL) {
             printf("[-] Failed to create thread %d, error: %lu\n", i, GetLastError());
         } 
