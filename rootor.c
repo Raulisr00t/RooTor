@@ -22,6 +22,25 @@ char *dequeue_url() {
     return url;
 }
 
+BOOL is_Tor_Running(){
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET)
+        return FALSE;
+    
+    struct sockaddr_in addr;
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(PORT);
+    addr.sin_addr.s_addr = inet_addr(LOCAL_PROXY);
+
+    BOOL connected;
+
+    connected = (connect(s, (struct sockaddr*)&addr, sizeof(addr)) == 0);
+    closesocket(s);
+
+    return connected;
+}
+
 BOOL is_onion_address(const char *host) {
     return (strstr(host, ".onion") != NULL) ? TRUE : FALSE;
 }
@@ -208,6 +227,11 @@ int main(int argc, char* argv[]) {
         printf("[!] Usage: rootor.exe <onion-hostname>\n");
         return 1;
     }
+
+    if (!is_Tor_Running()){
+        printf("[-] TOR isn't Running [-]\n");
+        return 1;
+    }    
     
     const char *url = argv[1];
     
