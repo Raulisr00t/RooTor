@@ -14,28 +14,44 @@ void enqueue_url(const char *url) {
 char *dequeue_url() {
     char *url = NULL;
     EnterCriticalSection(&queue_lock);
+    
     if (queue_start != queue_end) {
         url = url_queue[queue_start];
         queue_start = (queue_start + 1) % MAX_QUEUE;
+        printf("[DEBUG] Dequeued URL: %s\n", url);
+    } 
+    
+    else {
+        printf("[DEBUG] URL queue is empty\n");
     }
+    
     LeaveCriticalSection(&queue_lock);
+
     return url;
 }
 
 BOOL is_Tor_Running(){
+    printf("[DEBUG] Creating socket...\n");
+    fflush(stdout);
+
     SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s == INVALID_SOCKET)
+
+    if (s == INVALID_SOCKET) {
+        printf("[-] Socket creation failed, error: %d\n", WSAGetLastError());
+        fflush(stdout);
         return FALSE;
+    }
     
     struct sockaddr_in addr;
 
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT);
-    addr.sin_addr.s_addr = inet_addr(LOCAL_PROXY);
+    addr.sin_port = htons(PORT);       
+    addr.sin_addr.s_addr = inet_addr(LOCAL_PROXY); 
 
-    BOOL connected;
+    printf("[DEBUG] Trying to connect to proxy %s:%d\n", LOCAL_PROXY, PORT);
+    fflush(stdout);
 
-    connected = (connect(s, (struct sockaddr*)&addr, sizeof(addr)) == 0);
+    BOOL connected = (connect(s, (struct sockaddr*)&addr, sizeof(addr)) == 0);
     closesocket(s);
 
     return connected;
@@ -100,84 +116,100 @@ void extract_tag_content(const char* html, const char* tag) {
 }
 
 DWORD WINAPI crawl_worker(LPVOID param) {
+    printf("[DEBUG] Worker thread started\n");
+    fflush(stdout);
+
     while (1) {
         char *url = dequeue_url();
- 
+
         if (!url) {
+            printf("[DEBUG] No URL in queue, sleeping...\n");
+            fflush(stdout);
             Sleep(100);
             continue;
         }
 
         printf("[~] Crawling: %s\n", url);
+        fflush(stdout);
 
         WSADATA wsa;
- 
+
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            printf("[-] WSAStartup failed\n");
+            printf("[-] WSAStartup failed. Error: %d\n", WSAGetLastError());
+            fflush(stdout);
             free(url);
             continue;
         }
 
         SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
- 
         if (s == INVALID_SOCKET) {
-            printf("[-] Socket creation failed\n");
+            printf("[-] Socket creation failed. Error: %d\n", WSAGetLastError());
+            fflush(stdout);
             WSACleanup();
- 
             free(url);
             continue;
         }
 
         struct sockaddr_in sock;
- 
         sock.sin_family = AF_INET;
         sock.sin_port = htons(PORT);
         sock.sin_addr.s_addr = inet_addr(LOCAL_PROXY);
 
         if (connect(s, (struct sockaddr*)&sock, sizeof(sock)) != 0) {
-            printf("[-] Failed to connect to proxy\n");
+            printf("[-] Failed to connect to proxy. Error: %d\n", WSAGetLastError());
+            fflush(stdout);
             closesocket(s);
             WSACleanup();
-
             free(url);
             continue;
         }
 
         printf("[+] Connected to SOCKS proxy\n");
+        fflush(stdout);
 
         int req_len;
         req *r = request(url, 80, &req_len);
         if (!r) {
-            printf("[-] Failed to build SOCKS request\n");
+            printf("[-] Failed to build SOCKS request. Error: %lu\n", GetLastError());
+            fflush(stdout);
             closesocket(s);
             WSACleanup();
-            
             free(url);
             continue;
         }
 
-        send(s, (char*)r, req_len, 0);
+        if (send(s, (char*)r, req_len, 0) == SOCKET_ERROR) {
+            printf("[-] Failed to send SOCKS request. Error: %d\n", WSAGetLastError());
+            fflush(stdout);
+            closesocket(s);
+            free(r);
+            WSACleanup();
+            free(url);
+            continue;
+        }
 
         char buf[respsize];
         int res = recv(s, buf, respsize, 0);
         if (res <= 0) {
-            printf("[-] SOCKS proxy didn't respond\n");
+            printf("[-] SOCKS proxy didn't respond. recv() error: %d\n", WSAGetLastError());
+            fflush(stdout);
             closesocket(s);
             free(r);
             WSACleanup();
-            
             free(url);
             continue;
         }
 
         resp *response = (resp*)buf;
         printf("[+] SOCKS response code: %d\n", response->cd);
+        fflush(stdout);
+
         if (response->cd != 90) {
             printf("[-] SOCKS Proxy refused connection\n");
+            fflush(stdout);
             closesocket(s);
             free(r);
             WSACleanup();
-            
             free(url);
             continue;
         }
@@ -189,30 +221,155 @@ DWORD WINAPI crawl_worker(LPVOID param) {
             "Connection: close\r\n"
             "User-Agent: Toralizer/1.0\r\n\r\n", url);
 
-        send(s, tmp, strlen(tmp), 0);
-        memset(tmp, 0, sizeof(tmp));
+        if (send(s, tmp, strlen(tmp), 0) == SOCKET_ERROR) {
+            printf("[-] Failed to send HTTP GET request. Error: %d\n", WSAGetLastError());
+            fflush(stdout);
+            closesocket(s);
+            free(r);
+            WSACleanup();
+            free(url);
+            continue;
+        }
 
+        memset(tmp, 0, sizeof(tmp));
         int len = recv(s, tmp, sizeof(tmp) - 1, 0);
-       
-        if (len <= 0) 
-            printf("[-] No HTTP response received from %s\n", url);
-         
+        
+        if (len <= 0) {
+            printf("[-] No HTTP response received from %s. recv() error: %d\n", url, WSAGetLastError());
+            fflush(stdout);
+        } 
+        
         else {
             tmp[len] = '\0';
-    
             printf("[RESPONSE FROM %s]\n%s\n", url, tmp);
+        
+            fflush(stdout);
             extract_tag_content(tmp, user_tag);
         }
 
         closesocket(s);
         free(r);
-        
+ 
         WSACleanup();
         free(url);
     }
 
     return 0;
 }
+// DWORD WINAPI crawl_worker(LPVOID param) {
+//     while (1) {
+//         char *url = dequeue_url();
+ 
+//         if (!url) {
+//             Sleep(100);
+//             continue;
+//         }
+
+//         printf("[~] Crawling: %s\n", url);
+
+//         WSADATA wsa;
+ 
+//         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+//             printf("[-] WSAStartup failed\n");
+//             free(url);
+//             continue;
+//         }
+
+//         SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+ 
+//         if (s == INVALID_SOCKET) {
+//             printf("[-] Socket creation failed\n");
+//             WSACleanup();
+ 
+//             free(url);
+//             continue;
+//         }
+
+//         struct sockaddr_in sock;
+ 
+//         sock.sin_family = AF_INET;
+//         sock.sin_port = htons(PORT);
+//         sock.sin_addr.s_addr = inet_addr(LOCAL_PROXY);
+
+//         if (connect(s, (struct sockaddr*)&sock, sizeof(sock)) != 0) {
+//             printf("[-] Failed to connect to proxy\n");
+//             closesocket(s);
+//             WSACleanup();
+
+//             free(url);
+//             continue;
+//         }
+
+//         printf("[+] Connected to SOCKS proxy\n");
+
+//         int req_len;
+//         req *r = request(url, 80, &req_len);
+//         if (!r) {
+//             printf("[-] Failed to build SOCKS request\n");
+//             closesocket(s);
+//             WSACleanup();
+            
+//             free(url);
+//             continue;
+//         }
+
+//         send(s, (char*)r, req_len, 0);
+
+//         char buf[respsize];
+//         int res = recv(s, buf, respsize, 0);
+//         if (res <= 0) {
+//             printf("[-] SOCKS proxy didn't respond\n");
+//             closesocket(s);
+//             free(r);
+//             WSACleanup();
+            
+//             free(url);
+//             continue;
+//         }
+
+//         resp *response = (resp*)buf;
+//         printf("[+] SOCKS response code: %d\n", response->cd);
+//         if (response->cd != 90) {
+//             printf("[-] SOCKS Proxy refused connection\n");
+//             closesocket(s);
+//             free(r);
+//             WSACleanup();
+            
+//             free(url);
+//             continue;
+//         }
+
+//         char tmp[8192];
+//         snprintf(tmp, sizeof(tmp),
+//             "GET / HTTP/1.1\r\n"
+//             "Host: %s\r\n"
+//             "Connection: close\r\n"
+//             "User-Agent: Toralizer/1.0\r\n\r\n", url);
+
+//         send(s, tmp, strlen(tmp), 0);
+//         memset(tmp, 0, sizeof(tmp));
+
+//         int len = recv(s, tmp, sizeof(tmp) - 1, 0);
+       
+//         if (len <= 0) 
+//             printf("[-] No HTTP response received from %s\n", url);
+         
+//         else {
+//             tmp[len] = '\0';
+    
+//             printf("[RESPONSE FROM %s]\n%s\n", url, tmp);
+//             extract_tag_content(tmp, user_tag);
+//         }
+
+//         closesocket(s);
+//         free(r);
+        
+//         WSACleanup();
+//         free(url);
+//     }
+
+//     return 0;
+// }
 
 void start_threads(int thread_count) {
     InitializeCriticalSection(&queue_lock);
@@ -223,6 +380,9 @@ void start_threads(int thread_count) {
 }
 
 int main(int argc, char* argv[]) {
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2,2), &wsa);
+
     if (argc != 2) {
         printf("[!] Usage: rootor.exe <onion-hostname>\n");
         return 1;
@@ -230,6 +390,7 @@ int main(int argc, char* argv[]) {
 
     if (!is_Tor_Running()){
         printf("[-] TOR isn't Running [-]\n");
+        WSACleanup();
         return 1;
     }    
     
@@ -237,6 +398,7 @@ int main(int argc, char* argv[]) {
     
     if(!is_onion_address(url)){
         printf("[!] Please Enter Dark Web Site [!]\n");
+        WSACleanup();
         return 1;
     }    
     
