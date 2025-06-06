@@ -81,6 +81,8 @@ void extract_tag_content(const char* html, const char* tag) {
 }
 
 DWORD WINAPI crawl_worker(LPVOID param) {
+    int port = 80;
+    
     while (1) {
         char *url = dequeue_url();
         if (!url) {
@@ -105,7 +107,7 @@ DWORD WINAPI crawl_worker(LPVOID param) {
         }
 
         int req_len;
-        req *r = request(url, 80, &req_len);
+        req *r = request(url, port, &req_len);
         
         send(s, (char*)r, req_len, 0);
         char buf[respsize];
